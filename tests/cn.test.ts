@@ -1,0 +1,1 @@
+import assert from"node:assert/strict";import test from"node:test";import{cn}from"../lib/cn";test("class utility resolves Tailwind conflicts",()=>assert.equal(cn("px-2",false&&"hidden","px-4"),"px-4"));

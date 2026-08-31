@@ -1,0 +1,452 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  DEVELOPER
+  SUPPORT
+  VIEWER
+}
+
+enum OperationStatus {
+  PENDING
+  RUNNING
+  WAITING_EXTERNAL_ACTION
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum OperationKind {
+  SYNC_APPS
+  SYNC_BUILDS
+  SYNC_TESTERS
+  ADD_TESTER
+  REPLACE_TESTER
+  REMOVE_TESTER
+  ASSIGN_BUILD
+  VERIFY_CONNECTION
+  SYNC_DEVELOPER_RESOURCES
+  SYNC_FEEDBACK
+  SYNC_RELEASES
+  SYNC_REVIEWS
+  SYNC_ANALYTICS
+  REGISTER_DEVICE
+  REVOKE_CERTIFICATE
+  CREATE_PROFILE
+  RELEASE_VERSION
+}
+
+enum FeedbackStatus {
+  NEW
+  TRIAGED
+  IN_PROGRESS
+  RESOLVED
+  IGNORED
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model User {
+  id           String       @id @default(cuid())
+  username     String       @unique
+  email        String       @unique
+  name         String?
+  passwordHash String
+  role         Role         @default(VIEWER)
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  operations   Operation[]
+  auditEvents  AuditEvent[]
+}
+
+model Workspace {
+  id                     String    @id @default(cuid())
+  name                   String    @default("Apple Ops")
+  defaultAppId           String?
+  defaultInternalGroupId String?
+  autoAssignLatestBuild  Boolean   @default(true)
+  lastAppleVerifiedAt    DateTime?
+  lastAppleRequestAt     DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+}
+
+model App {
+  id            String      @id
+  name          String
+  bundleId      String
+  sku           String?
+  primaryLocale String?
+  rawJson       Json
+  syncedAt      DateTime    @default(now())
+  builds        Build[]
+  betaGroups    BetaGroup[]
+  testers       TesterApp[]
+  operations    Operation[]
+}
+
+model Build {
+  id              String    @id
+  appId           String
+  version         String
+  processingState String?
+  uploadedAt      DateTime?
+  expirationDate  DateTime?
+  expired         Boolean   @default(false)
+  minOsVersion    String?
+  encryptionUsed  Boolean?
+  rawJson         Json
+  syncedAt        DateTime  @default(now())
+  app             App       @relation(fields: [appId], references: [id], onDelete: Cascade)
+  groups          BuildGroup[]
+
+  @@index([appId, uploadedAt])
+}
+
+model BetaGroup {
+  id                   String        @id
+  appId                String
+  name                 String
+  isInternal           Boolean       @default(false)
+  hasAccessToAllBuilds Boolean       @default(false)
+  rawJson              Json
+  syncedAt             DateTime      @default(now())
+  app                  App           @relation(fields: [appId], references: [id], onDelete: Cascade)
+  testers              TesterGroup[]
+  builds               BuildGroup[]
+
+  @@index([appId])
+}
+
+model BuildGroup {
+  buildId String
+  groupId String
+  build   Build     @relation(fields: [buildId], references: [id], onDelete: Cascade)
+  group   BetaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([buildId, groupId])
+}
+
+model Tester {
+  id         String        @id
+  email      String?
+  firstName  String?
+  lastName   String?
+  inviteType String?
+  state      String?
+  rawJson    Json
+  syncedAt   DateTime      @default(now())
+  apps       TesterApp[]
+  groups     TesterGroup[]
+
+  @@index([email])
+}
+
+model TesterApp {
+  testerId String
+  appId    String
+  tester   Tester @relation(fields: [testerId], references: [id], onDelete: Cascade)
+  app      App    @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@id([testerId, appId])
+}
+
+model TesterGroup {
+  testerId String
+  groupId  String
+  tester   Tester    @relation(fields: [testerId], references: [id], onDelete: Cascade)
+  group    BetaGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([testerId, groupId])
+}
+
+model Operation {
+  id             String          @id @default(cuid())
+  kind           OperationKind
+  status         OperationStatus @default(PENDING)
+  idempotencyKey String          @unique
+  appId          String?
+  actorId        String?
+  input          Json
+  result         Json?
+  error          Json?
+  attempts       Int             @default(0)
+  nextRunAt      DateTime?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  app            App?            @relation(fields: [appId], references: [id], onDelete: SetNull)
+  actor          User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  steps          OperationStep[]
+
+  @@index([status, nextRunAt])
+  @@index([appId, createdAt])
+}
+
+model OperationStep {
+  id          String          @id @default(cuid())
+  operationId String
+  name        String
+  status      OperationStatus @default(PENDING)
+  ordinal     Int
+  detail      Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  operation   Operation       @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@unique([operationId, name])
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  ip         String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        Role
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model AppleConnection {
+  id             String    @id @default("default")
+  workspaceId    String    @unique
+  issuerIdHint   String?
+  keyId          String?
+  status         String    @default("NOT_CONFIGURED")
+  lastVerifiedAt DateTime?
+  lastRequestAt  DateTime?
+  lastError      Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model AppleUser {
+  id        String   @id
+  email     String
+  firstName String?
+  lastName  String?
+  roles     String[]
+  active    Boolean  @default(true)
+  rawJson   Json
+  syncedAt  DateTime @default(now())
+
+  @@index([email])
+}
+
+model AppleInvitation {
+  id         String    @id
+  email      String
+  firstName  String?
+  lastName   String?
+  expiration DateTime?
+  state      String?
+  rawJson    Json
+  syncedAt   DateTime  @default(now())
+
+  @@index([email])
+}
+
+model AppPreference {
+  id                     String   @id @default(cuid())
+  appId                  String   @unique
+  defaultTesterRole      String   @default("DEVELOPER")
+  defaultInternalGroupId String?
+  defaultExternalGroupId String?
+  autoAssignLatestBuild  Boolean  @default(true)
+  autoAddAcceptedTester  Boolean  @default(true)
+  autoSyncEnabled        Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model FeedbackItem {
+  id            String         @id
+  appId         String
+  buildId       String?
+  testerId      String?
+  type          String
+  comment       String?
+  email         String?
+  deviceModel   String?
+  osVersion     String?
+  platform      String?
+  createdDate   DateTime?
+  status        FeedbackStatus @default(NEW)
+  screenshotUrl String?
+  rawJson       Json
+  syncedAt      DateTime       @default(now())
+
+  @@index([appId, createdDate])
+  @@index([status])
+}
+
+model Certificate {
+  id              String    @id
+  name            String?
+  displayName     String?
+  certificateType String
+  serialNumber    String?
+  platform        String?
+  expirationDate  DateTime?
+  activated       Boolean   @default(true)
+  rawJson         Json
+  syncedAt        DateTime  @default(now())
+
+  @@index([expirationDate])
+}
+
+model RegisteredDevice {
+  id          String    @id
+  name        String
+  udid        String    @unique
+  platform    String
+  deviceClass String?
+  status      String
+  model       String?
+  addedDate   DateTime?
+  rawJson     Json
+  syncedAt    DateTime  @default(now())
+}
+
+model BundleId {
+  id           String   @id
+  name         String
+  identifier   String   @unique
+  platform     String
+  seedId       String?
+  capabilities Json?
+  rawJson      Json
+  syncedAt     DateTime @default(now())
+}
+
+model ProvisioningProfile {
+  id             String    @id
+  name           String
+  platform       String
+  profileType    String
+  profileState   String
+  uuid           String?
+  createdDate    DateTime?
+  expirationDate DateTime?
+  bundleIdRef    String?
+  rawJson        Json
+  syncedAt       DateTime  @default(now())
+
+  @@index([expirationDate])
+}
+
+model AppStoreVersion {
+  id                  String    @id
+  appId               String
+  platform            String
+  versionString       String
+  appStoreState       String?
+  appVersionState     String?
+  releaseType         String?
+  earliestReleaseDate DateTime?
+  createdDate         DateTime?
+  rawJson             Json
+  syncedAt            DateTime  @default(now())
+
+  @@index([appId, createdDate])
+}
+
+model CustomerReview {
+  id               String    @id
+  appId            String
+  rating           Int
+  title            String?
+  body             String?
+  reviewerNickname String?
+  territory        String?
+  createdDate      DateTime?
+  responseBody     String?
+  responseState    String?
+  rawJson          Json
+  syncedAt         DateTime  @default(now())
+
+  @@index([appId, createdDate])
+  @@index([rating])
+}
+
+model AnalyticsReport {
+  id                     String   @id
+  appId                  String
+  requestId              String?
+  name                   String?
+  category               String?
+  accessType             String?
+  stoppedDueToInactivity Boolean  @default(false)
+  rawJson                Json
+  syncedAt               DateTime @default(now())
+
+  @@index([appId])
+}
+
+model SubscriptionLookup {
+  id                 String   @id @default(cuid())
+  transactionIdHash  String
+  environment        String
+  statusResponse     Json?
+  transactionHistory Json?
+  refundHistory      Json?
+  requestedById      String?
+  createdAt          DateTime @default(now())
+
+  @@index([transactionIdHash, createdAt])
+}
+
+model WebhookEvent {
+  id          String        @id
+  eventType   String?
+  payload     Json
+  status      WebhookStatus @default(RECEIVED)
+  receivedAt  DateTime      @default(now())
+  processedAt DateTime?
+  error       Json?
+}
+
+model AutomationRule {
+  id        String    @id @default(cuid())
+  appId     String?
+  type      String
+  enabled   Boolean   @default(true)
+  config    Json
+  lastRunAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([appId, enabled])
+}

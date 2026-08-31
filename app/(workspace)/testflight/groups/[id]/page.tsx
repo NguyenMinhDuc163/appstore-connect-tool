@@ -1,0 +1,17 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { db } from "@/lib/db";
+import { Empty, PageHeader, Status } from "../../../_components/ui";
+const tabs = ["overview", "testers", "builds", "automation"] as const;
+export default async function GroupDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
+  const { id } = await params, { tab = "overview" } = await searchParams;
+  const group = await db.betaGroup.findUnique({ where: { id }, include: { app: true, testers: { include: { tester: true } }, builds: { include: { build: true } } } });
+  if (!group) notFound();
+  return <><PageHeader eyebrow={group.app.name} title={group.name} description={`${group.isInternal ? "Internal" : "External"} TestFlight group · updated ${group.syncedAt.toLocaleString()}`} />
+    <nav className="mb-5 flex gap-1 overflow-x-auto border-b" aria-label="Beta group views">{tabs.map(value => <Link key={value} href={`/testflight/groups/${id}?tab=${value}`} className={`min-h-11 border-b-2 px-4 py-3 text-sm font-semibold capitalize ${tab === value ? "border-blue-700 text-blue-800" : "border-transparent text-slate-600"}`}>{value}</Link>)}</nav>
+    {tab === "overview" && <div className="grid gap-4 sm:grid-cols-3"><section className="card p-5"><p className="eyebrow">Type</p><div className="mt-3"><Status value={group.isInternal ? "Internal" : "External"} /></div></section><section className="card p-5"><p className="eyebrow">Testers</p><p className="mt-2 font-mono text-3xl font-semibold">{group.testers.length}</p></section><section className="card p-5"><p className="eyebrow">Distribution</p><p className="mt-2 font-semibold">{group.hasAccessToAllBuilds ? "All builds" : "Selected builds"}</p></section></div>}
+    {tab === "testers" && (group.testers.length ? <div className="card divide-y">{group.testers.map(({ tester }) => <Link className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50" href={`/testflight/testers/${tester.id}`} key={tester.id}><span className="font-semibold">{tester.email ?? "Anonymous tester"}</span><Status value={tester.state ?? "Unknown"} /></Link>)}</div> : <Empty title="No testers in this group" text="Add an internal tester from the app context and Apple Ops will apply this group when it is the default." />)}
+    {tab === "builds" && (group.builds.length ? <div className="card divide-y">{group.builds.map(({ build }) => <Link className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50" href={`/testflight/builds/${build.id}`} key={build.id}><span><strong className="block">Build {build.version}</strong><span className="muted text-xs">{build.uploadedAt?.toLocaleString() ?? "Upload date unavailable"}</span></span><Status value={build.expired ? "Expired" : build.processingState ?? "Ready"} /></Link>)}</div> : <Empty title="No selected builds" text={group.hasAccessToAllBuilds ? "This group receives every eligible build automatically." : "Sync the app or enable automatic distribution in app settings."} />)}
+    {tab === "automation" && <section className="card max-w-2xl p-5"><h2 className="font-semibold">App-level automation</h2><p className="muted mt-2 text-sm">Tester acceptance and eligible build policies are configured once for {group.app.name}.</p><Link className="btn btn-primary mt-4" href={`/apps/${group.appId}/settings`}>Open automation settings</Link></section>}
+  </>;
+}

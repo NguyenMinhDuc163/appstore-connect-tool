@@ -1,0 +1,4 @@
+"use server";
+import{revalidatePath}from"next/cache";import{z}from"zod";import{requireUser}from"@/lib/auth";import{db}from"@/lib/db";import{audit}from"@/lib/services/audit";
+const schema=z.object({defaultAppId:z.string().optional(),defaultInternalGroupId:z.string().optional(),autoAssignLatestBuild:z.coerce.boolean()});
+export async function saveSettings(formData:FormData){const user=await requireUser();if(!["OWNER","ADMIN"].includes(user.role))throw new Error("Forbidden");const value=schema.parse({defaultAppId:String(formData.get("defaultAppId")??"")||undefined,defaultInternalGroupId:String(formData.get("defaultInternalGroupId")??"")||undefined,autoAssignLatestBuild:formData.get("autoAssignLatestBuild")==="on"});await db.workspace.upsert({where:{id:"default"},create:{id:"default",...value},update:value});await audit({actorId:user.id,action:"settings.update",entityType:"Workspace",entityId:"default",metadata:value});revalidatePath("/settings")}
